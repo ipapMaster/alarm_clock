@@ -1,0 +1,4 @@
+pillow==12.3.0
+pygame==2.6.1
+pystray==0.19.5
+six==1.17.0
