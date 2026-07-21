@@ -1,16 +1,15 @@
-# Приложение - будильник
-# Ver 1.0.1
-# Будильник с музыкой
 import os
 import tkinter as tk
 from tkinter import messagebox
 from tkinter import ttk  # Импортируем ttk для современных виджетов
 import threading
 import time
-import pygame
+import shutil  # Для копирования аудиофайлов в папку проекта
+from tkinter import filedialog  # Для вызова окна выбора файла
 from datetime import datetime
 from PIL import Image, ImageDraw, ImageTk
 import pystray
+import pygame
 from pystray import MenuItem as item
 
 
@@ -52,27 +51,40 @@ class AlarmApp:
     def __init__(self, root):
         self.root = root
         self.root.title("Будильник")
-        self.root.geometry("400x450")
+        self.root.geometry("500x450")
         self.root.configure(bg="#f5f5f5")
 
         # Генерируем картинку и конвертируем для Tkinter
         pil_img = create_alarm_icon()
-        tk_img = ImageTk.PhotoImage(pil_img)
+        self.tk_img = ImageTk.PhotoImage(pil_img)  # Защита от Garbage Collector
 
         # Устанавливаем как иконку главного окна
-        self.root.iconphoto(False, tk_img)
-
-        # Инициализация микшера звука
-        pygame.mixer.init()
-
-        # Файл звука будильника
-        self.music_file = 'alarm.mp3'
+        self.root.iconphoto(False, self.tk_img)
 
         # Настройка стилей для ttk
         self.style = ttk.Style()
         self.style.theme_use("clam")  # print(self.style.theme_names()) - доступные темы
         self.style.configure("Treeview", font=("Arial", 11), rowheight=25)
         self.style.configure("Treeview.Heading", font=("Arial", 11, "bold"))
+
+        # Подключаем микшер для воспроизведения
+        pygame.mixer.init()
+
+        if not os.path.exists('music'):
+            os.mkdir('music')
+
+        self.chosen_music_path = ""  # Переменная для временного хранения пути выбранного трека
+
+        # Файл для воспроизведения
+        """
+        Freesound.org — крупнейшая библиотека бесплатных звуков.
+        Что искать: Введите в поиск «alarm clock» или «digital beep».
+        Плюс: Все звуки имеют бесплатные лицензии (Creative Commons).
+        Звуки-тут.рф / Mixkit.co — популярные платформы с короткими звуковыми эффектами.
+        Что искать: Разделы «Будильник», «Сигналы» или «Alerts».
+        Плюс: Файлы сразу скачиваются в формате MP3 и обычно длятся от 2 до 10 секунд.
+        """
+        # self.music_file = 'alarm.mp3'
 
         # Список для хранения времени будильников
         self.alarms = []
@@ -85,6 +97,11 @@ class AlarmApp:
         self.time_entry = tk.Entry(input_frame, font=("Arial", 12), width=8, justify="center")
         self.time_entry.pack(side="left", padx=5)
         self.time_entry.focus()
+
+        # Новая кнопка выбора мелодии
+        tk.Label(input_frame, text="Мелодия:").pack(side="left", padx=5)
+        pick_btn = tk.Button(input_frame, text="Обзор...", command=self.pick_music)
+        pick_btn.pack(side="left", padx=5)
 
         add_btn = tk.Button(input_frame, text="Добавить", font=("Arial", 10, "bold"),
                             bg="#4CAF50", fg="white", activebackground="#45a049",
@@ -99,11 +116,13 @@ class AlarmApp:
                                                                                                          pady=5)
 
         # Таблица для отображения
-        self.tree = ttk.Treeview(list_frame, columns=("time", "status"), show="headings", height=8)
+        self.tree = ttk.Treeview(list_frame, columns=("time", "music", "status"), show="headings", height=8)
         self.tree.heading("time", text="Время", anchor="center")
+        self.tree.heading("music", text="Мелодия", anchor="center")
         self.tree.heading("status", text="Статус", anchor="center")
-        self.tree.column("time", width=150, anchor="center")
-        self.tree.column("status", width=150, anchor="center")
+        self.tree.column("time", width=80, anchor="center")
+        self.tree.column("music", width=180, anchor="center")
+        self.tree.column("status", width=80, anchor="center")
         self.tree.pack(side="left", fill="both", expand=True)
 
         # Скроллбар для таблицы
@@ -136,6 +155,40 @@ class AlarmApp:
 
         self.icon = None
 
+    def pick_music(self):
+        file_path = filedialog.askopenfilename(
+            filetypes=[('Music File', '*.mp3')]
+        )
+        if not file_path:
+            return
+
+        filename = os.path.basename(file_path)
+        destination = os.path.join("music", filename)
+
+        try:
+            shutil.copy(file_path, destination)
+            selected_item = self.tree.selection()
+
+            if selected_item:
+                values = self.tree.item(selected_item, "values")
+                selected_time = values[0]
+                for i, alarm in enumerate(self.alarms):
+                    if alarm[0] == selected_time:
+                        self.alarms[i] = (selected_time, destination)
+                        break
+
+                self.update_treeview()
+                messagebox.showinfo('Успешно',
+                                    f'Мелодия будильника {selected_item} изменения на {filename}')
+            else:
+                self.chosen_music_path = destination
+                messagebox.showinfo('Успешно',
+                                    f'Выбрана мелодия по умолчанию для нового будильника {filename}')
+
+
+        except Exception as e:
+            messagebox.showerror('Ошибка', f'Не удалось открыть файл: {e}')
+
     def update_treeview(self):
         """Обновляет графический список на основе массива self.alarms"""
         # Очищаем старые записи
@@ -146,15 +199,18 @@ class AlarmApp:
         self.alarms.sort()
 
         # Вставляем актуальные данные
-        for alarm in self.alarms:
-            self.tree.insert("", "end", values=(alarm, "Ожидание"))
+        for alarm_time, music_path in self.alarms:
+            filename = os.path.basename(music_path) if music_path else 'По умолчанию'
+            self.tree.insert("", "end", values=(alarm_time, filename, "Ожидание"))
 
     def add_alarm(self):
         alarm_time = self.time_entry.get().strip()
         try:
             time.strptime(alarm_time, "%H:%M")
-            if alarm_time not in self.alarms:
-                self.alarms.append(alarm_time)
+            existing_times = [alarm[0] for alarm in self.alarms]
+            if alarm_time not in existing_times:
+                self.alarms.append((alarm_time, self.chosen_music_path))
+                self.chosen_music_path = ''  # Сбрасываем для следующего будильника
                 self.update_treeview()  # Обновляем интерфейс
             else:
                 messagebox.showwarning("Внимание", "Такой будильник уже существует")
@@ -168,35 +224,48 @@ class AlarmApp:
         if not selected_item:
             messagebox.showwarning("Внимание", "Выберите будильник из списка для удаления")
             return
-            # Получаем значение времени из выбранной строки
-        alarm_time = self.tree.item(selected_item, "values")[0]
+
+        # Получаем значение времени из выбранной строки
+        values = self.tree.item(selected_item, "values")
+        alarm_time = values[0]
 
         # Удаляем из структуры данных и обновляем интерфейс
-        if alarm_time in self.alarms:
-            self.alarms.remove(alarm_time)
-            self.update_treeview()
+        for alarm in self.alarms:
+            if alarm[0] == alarm_time:
+                self.alarms.remove(alarm_time)
+                break
+
+        self.update_treeview()
 
     def check_alarm_loop(self):
         while True:
             now = datetime.now().strftime("%H:%M")
-            if now in self.alarms:
-                self.root.after(0, self.trigger_alarm, now)
-                self.alarms.remove(now)
-                # Безопасно обновляем интерфейс из фонового потока
-                self.root.after(0, self.update_treeview)
-            time.sleep(15)
+            target_alarm = None
+            for alarm in self.alarms:
+                if alarm[0] == now:
+                    target_alarm = alarm
+                    break
+            if target_alarm:
+                self.root.after(0, self.trigger_alarm, target_alarm)
+                self.alarms.remove(target_alarm)
+                self.root.after(0, self.update_treeview())
+            time.sleep(5)
 
-    def trigger_alarm(self, alarm_time):
+    def trigger_alarm(self, alarm_data):
+        """Вызывается при срабатывании: разворачивает окно,
+        запускает музыку и открывает окно отключения"""
+        alarm_time, music_file = alarm_data
         self.show_window()
-
         # Проверяем наличие файла мелодии
-        if os.path.exists(self.music_file):
-            pygame.mixer.music.load(self.music_file)
+        if music_file and os.path.exists(music_file):
+            pygame.mixer.music.load(music_file)
+            pygame.mixer.music.play(loops=-1)  # Бесконечный повтор, пока не остановим
+        elif os.path.exists('alarm.mp3'):
+            pygame.mixer.music.load('alarm.mp3')
             pygame.mixer.music.play(loops=-1)  # Бесконечный повтор, пока не остановим
         else:
             # Если файла нет, пищим стандартным системным звуком
             self.root.bell()
-
         # Вместо messagebox вызываем кастомное окно блокировки
         self.show_alarm_window(alarm_time)
 
@@ -226,7 +295,7 @@ class AlarmApp:
         stop_btn.pack(pady=10, ipadx=20)
 
     def hide_window(self):
-        self.root.withdraw()
+        self.root.withdraw()  # скрывает главное окно приложения с экрана, но не закрывает саму программу
         menu = (
             item('Открыть', self.show_window),
             item('Выход', self.quit_app)
