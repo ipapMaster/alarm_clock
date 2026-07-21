@@ -1,11 +1,13 @@
 # Приложение - будильник
-# Ver 1.0.0
-# Минимально рабочий будильник
+# Ver 1.0.1
+# Будильник с музыкой
+import os
 import tkinter as tk
 from tkinter import messagebox
 from tkinter import ttk  # Импортируем ttk для современных виджетов
 import threading
 import time
+import pygame
 from datetime import datetime
 from PIL import Image, ImageDraw, ImageTk
 import pystray
@@ -59,6 +61,12 @@ class AlarmApp:
 
         # Устанавливаем как иконку главного окна
         self.root.iconphoto(False, tk_img)
+
+        # Инициализация микшера звука
+        pygame.mixer.init()
+
+        # Файл звука будильника
+        self.music_file = 'alarm.mp3'
 
         # Настройка стилей для ttk
         self.style = ttk.Style()
@@ -180,7 +188,42 @@ class AlarmApp:
 
     def trigger_alarm(self, alarm_time):
         self.show_window()
-        messagebox.showinfo("Будильник!", f"Пора вставать!\nВремя: {alarm_time}")
+
+        # Проверяем наличие файла мелодии
+        if os.path.exists(self.music_file):
+            pygame.mixer.music.load(self.music_file)
+            pygame.mixer.music.play(loops=-1)  # Бесконечный повтор, пока не остановим
+        else:
+            # Если файла нет, пищим стандартным системным звуком
+            self.root.bell()
+
+        # Вместо messagebox вызываем кастомное окно блокировки
+        self.show_alarm_window(alarm_time)
+
+    def show_alarm_window(self, alarm_time):
+        """Создает модальное окно с кнопкой выключения музыки"""
+        alarm_win = tk.Toplevel(self.root)
+        alarm_win.title("БУДИЛЬНИК!")
+        alarm_win.geometry("300x150")
+        alarm_win.configure(bg="#fff3cd")
+        alarm_win.attributes("-topmost", True)  # Всегда поверх других окон
+        alarm_win.grab_set()  # Делаем окно модальным (блокирует основное окно)
+        tk.Label(alarm_win, text=f"Время: {alarm_time}", font=("Arial", 16, "bold"),
+                 bg="#fff3cd", fg="#856404").pack(pady=15)
+        tk.Label(alarm_win, text="Пора вставать!", font=("Arial", 12),
+                 bg="#fff3cd").pack(pady=5)
+
+        def stop_music():
+            # Проверяем, инициализирован ли микшер Pygame в данный момент
+            if pygame.mixer.get_init() is not None:
+                pygame.mixer.music.stop()  # Глушим музыку только если микшер работает
+
+            alarm_win.destroy()  # Закрываем всплывающее окошко в любом случае
+
+        stop_btn = tk.Button(alarm_win, text="СТОП", font=("Arial", 12, "bold"),
+                             bg="#dc3545", fg="white", activebackground="#bd2130", relief="flat",
+                             command=stop_music)
+        stop_btn.pack(pady=10, ipadx=20)
 
     def hide_window(self):
         self.root.withdraw()
@@ -197,12 +240,13 @@ class AlarmApp:
         self.root.after(0, self.root.deiconify)
 
     def quit_app(self):
+        pygame.mixer.quit()
         if self.icon:
             self.icon.stop()
         self.root.quit()
+
 
 if __name__ == "__main__":
     root = tk.Tk()
     app = AlarmApp(root)
     root.mainloop()
-
